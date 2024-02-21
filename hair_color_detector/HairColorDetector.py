@@ -2,7 +2,8 @@ import cv2
 import numpy as np 
 from PIL import Image
 from .HairSegmentator import HairSegmentator
-
+from typing import Union
+from sklearn.cluster import KMeans
 
 class HairColorDetector:
     def __init__(self) -> None:
@@ -14,6 +15,19 @@ class HairColorDetector:
         if pil_image.format=="PNG":
             pil_image = pil_image.convert("RGB")
         return np.array(pil_image)
+
+
+    def __process_segment(self, image, save_result):
+        parsing = self.hair_segmentator.get_parsing(image)
+        parsing = cv2.resize(parsing, 
+                              (image.shape[1],image.shape[0]), 
+                              interpolation=cv2.INTER_NEAREST
+                        )
+        hair_mask = self.hair_segmentator.hair(parsing, part=17)  
+        hair_segment = self.__get_hair_segment(image, hair_mask)
+        if save_result:
+            cv2.imwrite("segment.png", hair_segment)
+        return hair_segment, hair_mask
 
 
     def __get_hair_segment(self, original_image, hair_mask):
@@ -63,25 +77,59 @@ class HairColorDetector:
         return cv2.merge((r, g, b, mask))
 
 
-    def get_histogram_similarity(self, image_path1, image_path2):
-        image1 = self.__open_image(image_path1)
-        image2 = self.__open_image(image_path2)
-        parsing1 = self.hair_segmentator.get_parsing(image1)
-        parsing2 = self.hair_segmentator.get_parsing(image2)
-        parsing1 = cv2.resize(parsing1, (image1.shape[1],image1.shape[0]), interpolation=cv2.INTER_NEAREST)
-        parsing2 = cv2.resize(parsing2, (image2.shape[1],image2.shape[0]), interpolation=cv2.INTER_NEAREST)
-        hair_mask_1 = self.hair_segmentator.hair(parsing1, part=17)
-        hair_mask_2 = self.hair_segmentator.hair(parsing2, part=17)
-        hair_segment1 = self.__get_hair_segment(image1, hair_mask_1)
-        cv2.imwrite("segment1.png", hair_segment1)
-        hair_segment2 = self.__get_hair_segment(image2, hair_mask_2)
-        cv2.imwrite("segment2.png", hair_segment2)
-        return compare_histograms(hair_segment1, hair_segment2)
+    def get_histogram_similarity(self, 
+                                 image_inp1: Union[str, np.ndarray], 
+                                 image_inp2: Union[str, np.ndarray], 
+                                 method=cv2.HISTCMP_BHATTACHARYYA, 
+                                 save_result: bool = False
+            ):
+        assert (isinstance(image_inp1, str) or isinstance(image_inp1, np.ndarray)) and \
+            (isinstance(image_inp2, str) or isinstance(image_inp2, np.ndarray)), \
+            "image_inp1 and image_inp2 must be instances of str or np.ndarray"
+        assert isinstance(save_result, bool), "save_result must be a boolean"
+        if type(image_inp1) == str: image1 = self.__open_image(image_inp1)
+        else: image1 = image_inp1
+        if type(image_inp2) == str: image2 = self.__open_image(image_inp2)
+        else: image2 = image_inp2
+        hair_segment1, hair_mask1 = self.__process_segment(image1, save_result)
+        hair_segment2, hair_mask2 = self.__process_segment(image2, save_result)
+        return compare_histograms(hair_segment1, hair_segment2, method)
 
 
+    def get_color(self,
+                  image_inp: Union[str, np.ndarray],
+                  n_clusters: int = 3,
+                  save_result: bool = False):
+        assert (isinstance(image_inp, str) or isinstance(image_inp, np.ndarray)), \
+                "image_inp must be instances of str or np.ndarray"        
+        assert isinstance(save_result, bool), "save_result must be a boolean"
+        if type(image_inp) == str: image = self.__open_image(image_inp)
+        else: image = image_inp
+        hair_segment, hair_mask = self.__process_segment(image, save_result)
+        return hair_segment, hair_mask, dominant_color(hair_segment, n_clusters)
 
 
-def compare_histograms(image1, image2):
+def dominant_color(image, n_clusters=3):
+    # Obtener los píxeles no transparentes
+    transparent_pixels = np.where(image[:, :, 3] != 0)
+    hair_pixels = image[transparent_pixels][:, :3]
+    
+    # Aplicar KMeans para encontrar los clusters de colores
+    kmeans = KMeans(n_clusters=n_clusters)
+    kmeans.fit(hair_pixels)
+    
+    # Obtener los centroides de los clusters y sus etiquetas
+    centroids = kmeans.cluster_centers_
+    labels = kmeans.labels_
+    
+    # Encontrar el color más dominante
+    dominant_label = np.argmax(np.bincount(labels))
+    dominant_color = centroids[dominant_label]
+    
+    return dominant_color.astype(int)[::-1]
+
+
+def compare_histograms(image1, image2, method):
     # Convierte las imágenes a espacio de color RGB
     img1_rgb = image1
     img2_rgb = image2
@@ -107,7 +155,7 @@ def compare_histograms(image1, image2):
     cv2.normalize(hist_img2, hist_img2)
     
     # Calcula la similitud entre los histogramas usando la distancia Chi-Cuadrado
-    similarity = cv2.compareHist(hist_img1, hist_img2, cv2.HISTCMP_BHATTACHARYYA)
+    similarity = cv2.compareHist(hist_img1, hist_img2, method)
     min_similarity = 0  # Valor mínimo deseado
     max_similarity = 1  # Valor máximo deseado
     
