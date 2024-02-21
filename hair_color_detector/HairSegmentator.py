@@ -1,16 +1,25 @@
 import torch
-from model import BiSeNet
+from .model import BiSeNet
 import numpy as np
 from PIL import Image
 import torchvision.transforms as transforms
 import cv2
 
-
 class HairSegmentator():
   
     def __init__(self):
         self.anno = None
-
+        n_classes = 19
+        self.net = BiSeNet(n_classes=n_classes)
+        PATH = get_model_file()
+        self.net.load_state_dict(torch.load(PATH, map_location=torch.device('cpu')))
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.net.to(device)
+        self.net.eval()
+        self.to_tensor = transforms.Compose([
+              transforms.ToTensor(),
+              transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+          ])
 
     def vis_parsing_maps(self,im, parsing_anno, stride, save_im=False, save_path='vis_results/parsing_map_on_im.jpg'):
         # Colors for all 20 parts
@@ -40,27 +49,15 @@ class HairSegmentator():
           #     cv2.imwrite("parsing"+".jpg", vis_im, [cv2.IMWRITE_JPEG_QUALITY, 100])
 
     def get_parsing(self,img,save_path="/content"):
-        n_classes = 19
-        net = BiSeNet(n_classes=n_classes)
-        # PATH = "/content/drive/MyDrive/79999_iter.pth"
-        PATH = "./79999_iter.pth"
-        net.load_state_dict(torch.load(PATH, map_location=torch.device('cpu')))
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        net.to(device)
-        net.eval()
-        to_tensor = transforms.Compose([
-              transforms.ToTensor(),
-              transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-          ])
         with torch.no_grad():
             # img = Image.open(img_path)
             img = Image.fromarray(img)
             image = img.resize((512, 512), Image.BILINEAR)
-            img = to_tensor(image)
+            img = self.to_tensor(image)
             img = torch.unsqueeze(img, 0)
             img = img.cuda()
 
-            out = net(img)[0]
+            out = self.net(img)[0]
             parsing = out.squeeze(0).cpu().numpy().argmax(0)
             self.vis_parsing_maps(image, parsing, stride=1, save_im=True, save_path=save_path)
             return parsing
@@ -69,3 +66,8 @@ class HairSegmentator():
     def hair(self, parsing, part=17):
         return np.expand_dims(np.array(parsing == part).astype('uint8'), axis=-1) * 255
 
+import pkg_resources
+
+def get_model_file():
+    path = pkg_resources.resource_filename(__name__, '79999_iter.pth')
+    return path

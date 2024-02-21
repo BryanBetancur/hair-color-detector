@@ -1,7 +1,7 @@
 import cv2 
 import numpy as np 
 from PIL import Image
-from HairSegmentator import HairSegmentator
+from .HairSegmentator import HairSegmentator
 
 
 class HairColorDetector:

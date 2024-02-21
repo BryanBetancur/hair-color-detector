@@ -1,0 +1,1 @@
+from .HairColorDetector import HairColorDetector
